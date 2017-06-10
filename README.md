@@ -1,2 +1,10 @@
-# gsthaikuaudiosink
-GStreamer audio sink element for Haiku
+GStreamer audio sink plugin for Haiku
+===================================
+
+Compilation
+===========
+
+    $> mkdir build
+    $> cd build
+    $> cmake ..
+    $> make
