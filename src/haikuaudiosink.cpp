@@ -20,8 +20,6 @@
 #include <string.h>
 #include <unistd.h>
 
-GST_DEBUG_CATEGORY_EXTERN (haiku_debug);
-#define GST_CAT_DEFAULT haiku_debug
 #define GST_PACKAGE_NAME "Gstreamer"
 #define GST_PACKAGE_ORIGIN "GStreamer community"
 #define VERSION "0.10.36"
@@ -32,8 +30,6 @@ plugin_init (GstPlugin * plugin)
 {
 	if (!gst_element_register (plugin, "haikuaudiosink", GST_RANK_PRIMARY, GST_TYPE_HAIKUAUDIOSINK))
 		return FALSE;
-
-	GST_DEBUG_CATEGORY_INIT (sdl_debug, "haiku", 0, "Haiku elements");
 
 	return TRUE;
 }
