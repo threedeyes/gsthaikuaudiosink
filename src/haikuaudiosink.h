@@ -18,6 +18,7 @@
 
 #include <gst/gst.h>
 #include <gst/audio/gstaudiosink.h>
+#include <gst/interfaces/mixer.h>
 
 #include <Application.h>
 #include <Roster.h>
@@ -51,6 +52,9 @@ struct _GstHaikuAudioSink {
 
 	BSoundPlayer *m_player;	
 	BString *nodeName;
+
+	double volume;
+	gboolean mute;
 };
 
 struct _GstHaikuAudioSinkClass {
