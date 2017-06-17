@@ -16,7 +16,7 @@
 #include "config.h"
 #endif
 
-#include "haikuaudiosink.h"
+#include "haikuaudiosink_0.10.h"
 #include <string.h>
 #include <unistd.h>
 
