@@ -46,7 +46,7 @@ plugin_init (GstPlugin * plugin)
 extern "C" {
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
-    "haiku",
+    haiku,
     "Haiku MediaKit plugin for GStreamer",
     plugin_init, VERSION, "LGPL", GST_PACKAGE_NAME, GST_PACKAGE_ORIGIN)
 }
@@ -271,36 +271,6 @@ gst_haikuaudio_sink_open (GstAudioSink * asink)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK (asink);
 
-	uint32 segsize = HAIKU_SND_BUFFER_SIZE * atoi(HAIKU_SND_CHANNELS);
-
-	haikuaudio->mediaKitFormat = {
-		(float)atof(HAIKU_SND_RATE),
-		(uint32)atoi(HAIKU_SND_CHANNELS),
-		media_raw_audio_format::B_AUDIO_SHORT,
-		B_MEDIA_LITTLE_ENDIAN,
-		(uint32)segsize
-  	};
-
-	haikuaudio->buffer = (unsigned char*)g_malloc (segsize);
-	memset (haikuaudio->buffer, 0, segsize);
-
-	haikuaudio->m_player = new BSoundPlayer(&haikuaudio->mediaKitFormat,
-	haikuaudio->nodeName->String(), playerProc, NULL, (void*)haikuaudio);
-
-	if(haikuaudio->m_player->InitCheck() != B_OK) {
-		delete haikuaudio->m_player;
-		haikuaudio->m_player = NULL;
-		free(haikuaudio->buffer);
-		haikuaudio->buffer = NULL;
-		return FALSE;
-	}
-
-	haikuaudio->block_sem = create_sem(0, "blocker");
-	haikuaudio->unblock_sem = create_sem(1, "unblocker");
-
-	haikuaudio->m_player->Start();
-  	haikuaudio->m_player->SetHasData(true);
-
 	return TRUE;
 }
 
@@ -308,23 +278,6 @@ static gboolean
 gst_haikuaudio_sink_close (GstAudioSink * asink)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK (asink);
-
-	if(haikuaudio->m_player != NULL) {
-		haikuaudio->m_player->SetHasData(false);
-		haikuaudio->m_player->Stop();
-
-		delete_sem(haikuaudio->block_sem);
-		delete_sem(haikuaudio->unblock_sem);
-
-		delete haikuaudio->m_player;
-
-		haikuaudio->m_player = NULL;
-	}
-
-	if(haikuaudio->buffer != NULL) {
-		free(haikuaudio->buffer);
-		haikuaudio->buffer = NULL;
-	}
 
 	return TRUE;
 }
@@ -355,8 +308,38 @@ gst_haikuaudio_sink_prepare (GstAudioSink * asink, GstAudioRingBufferSpec * spec
 
 	if (GST_AUDIO_INFO_WIDTH (&spec->info) != atoi(HAIKU_SND_WIDTH))
 		return FALSE;
+	if (GST_AUDIO_INFO_CHANNELS (&spec->info) != atoi(HAIKU_SND_CHANNELS))
+		return FALSE;
 
 	spec->segsize = HAIKU_SND_BUFFER_SIZE * GST_AUDIO_INFO_CHANNELS (&spec->info);
+
+	haikuaudio->mediaKitFormat = {
+		(float)atof(HAIKU_SND_RATE),
+		(uint32)atoi(HAIKU_SND_CHANNELS),
+		media_raw_audio_format::B_AUDIO_SHORT,
+		B_MEDIA_LITTLE_ENDIAN,
+		(uint32)spec->segsize
+  	};
+
+	haikuaudio->buffer = (unsigned char*)g_malloc (spec->segsize);
+	memset (haikuaudio->buffer, 0, spec->segsize);
+
+	haikuaudio->m_player = new BSoundPlayer(&haikuaudio->mediaKitFormat,
+	haikuaudio->nodeName->String(), playerProc, NULL, (void*)haikuaudio);
+
+	if(haikuaudio->m_player->InitCheck() != B_OK) {
+		delete haikuaudio->m_player;
+		haikuaudio->m_player = NULL;
+		free(haikuaudio->buffer);
+		haikuaudio->buffer = NULL;
+		return FALSE;
+	}
+
+	haikuaudio->block_sem = create_sem(0, "blocker");
+	haikuaudio->unblock_sem = create_sem(1, "unblocker");
+
+	haikuaudio->m_player->Start();
+  	haikuaudio->m_player->SetHasData(true);
 
 	return TRUE;
 }
@@ -365,6 +348,23 @@ static gboolean
 gst_haikuaudio_sink_unprepare (GstAudioSink * asink)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK (asink);
+
+	if(haikuaudio->m_player != NULL) {
+		haikuaudio->m_player->SetHasData(false);
+		haikuaudio->m_player->Stop();
+
+		delete_sem(haikuaudio->block_sem);
+		delete_sem(haikuaudio->unblock_sem);
+
+		delete haikuaudio->m_player;
+
+		haikuaudio->m_player = NULL;
+	}
+
+	if(haikuaudio->buffer != NULL) {
+		free(haikuaudio->buffer);
+		haikuaudio->buffer = NULL;
+	}
 
 	return TRUE;
 }
