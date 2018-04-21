@@ -17,7 +17,7 @@ set(GSTHAIKUAUDIO_LIB_NAME gsthaikuaudiosink)
 
 pkg_check_modules(GST1_TEST gstreamer-1.0)
 if ( GST1_TEST_FOUND )
-	set(GSTHAIKUAUDIO_LIBRARIES glib-2.0 gstreamer-1.0 gstaudio-1.0 be root media)
+	set(GSTHAIKUAUDIO_LIBRARIES glib-2.0 gobject-2.0 gstbase-1.0 gstreamer-1.0 gstaudio-1.0 gstcontroller-1.0 intl be root media)
 	add_library(${GSTHAIKUAUDIO_LIB_NAME} SHARED src/haikuaudiosink_1.0.cpp)
 endif()
 

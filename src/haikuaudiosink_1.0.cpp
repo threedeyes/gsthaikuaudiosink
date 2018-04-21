@@ -22,7 +22,7 @@
 
 #define GST_PACKAGE_NAME "Gstreamer"
 #define GST_PACKAGE_ORIGIN "GStreamer community"
-#define VERSION "1.12.0"
+#define VERSION "1.14.0"
 #define PACKAGE "gstreamer"
 
 #define DEFAULT_MUTE        FALSE
@@ -46,7 +46,7 @@ plugin_init (GstPlugin * plugin)
 extern "C" {
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
-    haiku,
+    haikuaudiosink,
     "Haiku MediaKit plugin for GStreamer",
     plugin_init, VERSION, "LGPL", GST_PACKAGE_NAME, GST_PACKAGE_ORIGIN)
 }
