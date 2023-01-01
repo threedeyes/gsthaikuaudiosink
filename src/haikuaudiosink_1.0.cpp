@@ -1,5 +1,5 @@
 /* Haiku audio sink plugin for GStreamer
- * Copyright (C) <2017> Gerasim Troeglazov <3dEyes@gmail.com>
+ * Copyright (C) <2017-2023> Gerasim Troeglazov <3dEyes@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -22,7 +22,7 @@
 
 #define GST_PACKAGE_NAME "Gstreamer"
 #define GST_PACKAGE_ORIGIN "GStreamer community"
-#define VERSION "1.14.0"
+#define VERSION "1.20.4"
 #define PACKAGE "gstreamer"
 
 #define DEFAULT_MUTE        FALSE
@@ -30,9 +30,9 @@
 #define MAX_VOLUME          1.0
 
 #define HAIKU_SND_BUFFER_SIZE 1920
-#define HAIKU_SND_RATE "48000"
-#define HAIKU_SND_CHANNELS "2"
-#define HAIKU_SND_WIDTH "16"
+#define HAIKU_SND_RATE		"48000"
+#define HAIKU_SND_CHANNELS	"2"
+#define HAIKU_SND_WIDTH		"32"
 
 static gboolean
 plugin_init (GstPlugin * plugin)
@@ -61,7 +61,12 @@ static void gst_haikuaudio_sink_base_init (gpointer g_class);
 static void gst_haikuaudio_sink_class_init (GstHaikuAudioSinkClass * klass);
 static void gst_haikuaudio_sink_init (GstHaikuAudioSink * haikuaudiosink, GstHaikuAudioSinkClass * g_class);
 static gint gst_haikuaudio_sink_write (GstAudioSink * asink, gpointer data, guint length);
-static void gst_haikuaudio_sink_set_volume (GstHaikuAudioSink * sink);
+
+static void gst_haikuaudio_sink_set_volume (GstHaikuAudioSink * sink, gdouble volume, gboolean store);
+static gdouble gst_haikuaudio_sink_get_volume (GstHaikuAudioSink * sink);
+static void gst_haikuaudio_sink_set_mute (GstHaikuAudioSink * sink, gboolean mute);
+static gboolean gst_haikuaudio_sink_get_mute (GstHaikuAudioSink * sink);
+
 static void gst_haikuaudio_sink_set_property (GObject * object, guint prop_id, const GValue * value, GParamSpec * pspec);
 static void gst_haikuaudio_sink_get_property (GObject * object, guint prop_id, GValue * value, GParamSpec * pspec);
 
@@ -82,11 +87,10 @@ static GstStaticPadTemplate haikuaudiosink_sink_factory =
 	GST_PAD_SINK,
 	GST_PAD_ALWAYS,
 	GST_STATIC_CAPS ("audio/x-raw, "
-        "format = (string) S16LE, "
+        "format = (string) F32LE, "
         "channels = (int) " HAIKU_SND_CHANNELS ", "
         "rate = (int) " HAIKU_SND_RATE ", "
         "layout = (string) interleaved")
-        		
 	);
 
 static GstElementClass *parent_class = NULL;
@@ -176,14 +180,22 @@ static void
 gst_haikuaudio_sink_init (GstHaikuAudioSink * haikuaudiosink,
     GstHaikuAudioSinkClass * g_class)
 {
+	haikuaudiosink->is_webapp = FALSE;
 	haikuaudiosink->buffer = NULL;
 	haikuaudiosink->nodeName = new BString("GStreamer");
 	if (be_app != NULL)  {
 		app_info appinfo;
 		if (be_app->GetAppInfo(&appinfo) == B_OK) {
-  			BPath apppath(&appinfo.ref);
-  			if (apppath.InitCheck() == B_OK)
-  				haikuaudiosink->nodeName->SetTo(apppath.Leaf());
+			BPath apppath(&appinfo.ref);
+			if (apppath.InitCheck() == B_OK) {
+				haikuaudiosink->nodeName->SetTo(apppath.Leaf());
+				if (strncmp(appinfo.signature, "application/x-vnd.gtk-webkit-webprocess", B_MIME_TYPE_LENGTH) == 0 ||
+					strncmp(appinfo.signature, "application/x-vnd.otter-browser", B_MIME_TYPE_LENGTH) == 0 ||
+					strncmp(appinfo.signature, "application/x-vnd.qutebrowser", B_MIME_TYPE_LENGTH) == 0 ||
+					strncmp(appinfo.signature, "application/x-vnd.dooble", B_MIME_TYPE_LENGTH) == 0) {
+						haikuaudiosink->is_webapp = TRUE;
+				}
+			}
 		}
 	}
 	haikuaudiosink->volume = DEFAULT_VOLUME;
@@ -198,7 +210,7 @@ gst_haikuaudio_sink_getcaps (GstBaseSink * bsink, GstCaps * filter)
   GstCaps *caps = NULL;
 
   caps = gst_caps_new_simple ("audio/x-raw",
-      "format", G_TYPE_STRING, "S16LE",
+      "format", G_TYPE_STRING, "F32LE",
       "layout", G_TYPE_STRING, "interleaved",
       "channels", G_TYPE_INT, atoi(HAIKU_SND_CHANNELS), "rate", G_TYPE_INT, atoi(HAIKU_SND_RATE), NULL);
   return caps;
@@ -212,11 +224,10 @@ gst_haikuaudio_sink_set_property (GObject * object, guint prop_id,
 
 	switch (prop_id) {
 		case ARG_VOLUME:
-			sink->volume = g_value_get_double (value);
-			gst_haikuaudio_sink_set_volume (sink);
+			gst_haikuaudio_sink_set_volume (sink, g_value_get_double (value), TRUE);
 			break;
 		case ARG_MUTE:
-			sink->mute = g_value_get_boolean (value);
+			gst_haikuaudio_sink_set_mute (sink, g_value_get_boolean (value));
 			break;
 		default:
 			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -232,10 +243,10 @@ gst_haikuaudio_sink_get_property (GObject * object, guint prop_id,
 
 	switch (prop_id) {
 		case ARG_VOLUME:
-			g_value_set_double (value, sink->volume);
+			g_value_set_double (value, gst_haikuaudio_sink_get_volume (sink));
 			break;
 		case ARG_MUTE:
-			g_value_set_boolean (value, sink->mute);
+			g_value_set_boolean (value, gst_haikuaudio_sink_get_mute (sink));
 			break;
 		default:
 			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -244,26 +255,113 @@ gst_haikuaudio_sink_get_property (GObject * object, guint prop_id,
 }
 
 static void
-gst_haikuaudio_sink_set_volume (GstHaikuAudioSink * sink)
+gst_haikuaudio_sink_set_volume (GstHaikuAudioSink * sink, gdouble dvolume, gboolean store)
 {
-	if (sink->m_player == NULL)
+	if (store)
+		sink->volume = dvolume;
+
+	if (sink->soundPlayer == NULL)
 		return;
-	if (sink->m_player->InitCheck() != B_OK)
+	if (sink->soundPlayer->InitCheck() != B_OK)
 		return;
-	sink->m_player->SetVolume((float)sink->volume);
+
+	sink->soundPlayer->SetVolume((float)dvolume);
+}
+
+gdouble
+gst_haikuaudio_sink_get_volume (GstHaikuAudioSink * sink)
+{
+	if (sink->soundPlayer != NULL)
+		sink->volume = (gdouble)sink->soundPlayer->Volume();
+
+	return (gdouble)sink->volume;
 }
 
 static void
-playerProc(void *cookie, void *buffer, size_t len, const media_raw_audio_format &format)
+gst_haikuaudio_sink_set_mute (GstHaikuAudioSink * sink, gboolean mute)
+{
+  if (mute) {
+    gst_haikuaudio_sink_set_volume (sink, 0, FALSE);
+    sink->mute = TRUE;
+  } else {
+    gst_haikuaudio_sink_set_volume (sink, gst_haikuaudio_sink_get_volume (sink), FALSE);
+    sink->mute = FALSE;
+  }
+}
+
+static gboolean
+gst_haikuaudio_sink_get_mute (GstHaikuAudioSink * sink)
+{
+  return sink->mute;
+}
+
+static void
+gst_haikuaudio_sink_soundplayer_callback(void *cookie, void *buffer, size_t length, const media_raw_audio_format &format)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK ((GstAudioSink*)cookie);
-	bigtime_t timeout = ((1000000 / (format.channel_count * (atoi(HAIKU_SND_WIDTH) / 8))) * len) / format.frame_rate;
+
+	bigtime_t timeout = (1000000 * (length / (format.channel_count * sizeof(float)))) / format.frame_rate;
+
 	if (acquire_sem_etc(haikuaudio->block_sem, 1, B_RELATIVE_TIMEOUT, timeout) == B_TIMED_OUT) {
-		memset(buffer, 0, len);
+		memset(buffer, 0, length);
 		return;
 	}
-	memcpy(buffer, haikuaudio->buffer, len);
+
+	memcpy(buffer, haikuaudio->buffer, length);
 	release_sem(haikuaudio->unblock_sem);
+}
+
+static void
+gst_haikuaudio_sink_soundplayer_create (GstHaikuAudioSink * sink)
+{
+	if(sink->soundPlayer == NULL) {
+		sink->soundPlayer = new BSoundPlayer(&sink->mediaKitFormat,
+			sink->nodeName->String(), gst_haikuaudio_sink_soundplayer_callback, NULL, (void*)sink);
+
+		if(sink->soundPlayer->InitCheck() != B_OK) {
+			delete sink->soundPlayer;
+			sink->soundPlayer = NULL;
+			return;
+		}
+
+		sink->block_sem = create_sem(0, "blocker");
+		sink->unblock_sem = create_sem(1, "unblocker");
+
+		sink->soundPlayer->Start();
+		sink->soundPlayer->SetHasData(true);
+
+		gst_haikuaudio_sink_set_volume (sink, gst_haikuaudio_sink_get_volume (sink), FALSE);
+		gst_haikuaudio_sink_set_mute (sink, sink->mute);
+	}
+}
+
+static void
+gst_haikuaudio_sink_soundplayer_delete (GstHaikuAudioSink * sink)
+{
+	if (sink->soundPlayer != NULL) {
+		gst_haikuaudio_sink_get_volume (sink);
+
+		sink->soundPlayer->SetHasData(false);
+		sink->soundPlayer->Stop();
+
+		delete_sem(sink->block_sem);
+		delete_sem(sink->unblock_sem);
+
+		delete sink->soundPlayer;
+
+		sink->soundPlayer = NULL;
+	}
+}
+
+static int32
+gst_haikuaudio_sink_monitor_thread (void *data)
+{
+	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK ((GstAudioSink*)data);
+	while(true) {
+		if (system_time() - haikuaudio->lastWriteTime > 1000000)
+			gst_haikuaudio_sink_soundplayer_delete(haikuaudio);
+		snooze(10000);
+	}
 }
 
 static gboolean
@@ -287,32 +385,21 @@ gst_haikuaudio_sink_write (GstAudioSink * asink, gpointer data, guint length)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK (asink);
 
-	if(haikuaudio->m_player == NULL) {
-		haikuaudio->m_player = new BSoundPlayer(&haikuaudio->mediaKitFormat,
-		haikuaudio->nodeName->String(), playerProc, NULL, (void*)haikuaudio);
-
-		if(haikuaudio->m_player->InitCheck() != B_OK) {
-			delete haikuaudio->m_player;
-			haikuaudio->m_player = NULL;
-			return FALSE;
-		}
-
-		haikuaudio->block_sem = create_sem(0, "blocker");
-		haikuaudio->unblock_sem = create_sem(1, "unblocker");
-
-		haikuaudio->m_player->Start();
-	  	haikuaudio->m_player->SetHasData(true);
-	}
+	if (haikuaudio->is_webapp)
+		gst_haikuaudio_sink_soundplayer_create(haikuaudio);
 
 	if (length > haikuaudio->mediaKitFormat.buffer_size) {
 		length = haikuaudio->mediaKitFormat.buffer_size;
 	}
-	bigtime_t timeout = ((1000000 / ((atoi(HAIKU_SND_WIDTH) / 8 ) * atoi(HAIKU_SND_CHANNELS))) * length) / atoi(HAIKU_SND_RATE);
 
-	if (acquire_sem_etc(haikuaudio->unblock_sem, 1, B_RELATIVE_TIMEOUT, timeout) == B_TIMED_OUT) {
+	bigtime_t timeout = (1000000 * (length / (haikuaudio->mediaKitFormat.channel_count *
+		sizeof(float)))) / haikuaudio->mediaKitFormat.frame_rate;
+
+	if (acquire_sem_etc(haikuaudio->unblock_sem, 1, B_RELATIVE_TIMEOUT, timeout) == B_TIMED_OUT)
 		return 0;
-	}
+
 	memcpy(haikuaudio->buffer, data, length);
+	haikuaudio->lastWriteTime = system_time();
 	release_sem(haikuaudio->block_sem);
 
 	return length;
@@ -328,18 +415,26 @@ gst_haikuaudio_sink_prepare (GstAudioSink * asink, GstAudioRingBufferSpec * spec
 	if (GST_AUDIO_INFO_CHANNELS (&spec->info) != atoi(HAIKU_SND_CHANNELS))
 		return FALSE;
 
-	spec->segsize = HAIKU_SND_BUFFER_SIZE * GST_AUDIO_INFO_CHANNELS (&spec->info);
+	spec->segsize = HAIKU_SND_BUFFER_SIZE;
 
 	haikuaudio->mediaKitFormat = {
 		(float)atof(HAIKU_SND_RATE),
 		(uint32)atoi(HAIKU_SND_CHANNELS),
-		media_raw_audio_format::B_AUDIO_SHORT,
+		media_raw_audio_format::B_AUDIO_FLOAT,
 		B_MEDIA_LITTLE_ENDIAN,
 		(uint32)spec->segsize
   	};
 
 	haikuaudio->buffer = (unsigned char*)g_malloc (spec->segsize);
 	memset (haikuaudio->buffer, 0, spec->segsize);
+
+	if (haikuaudio->is_webapp) {
+		haikuaudio->monitorThread = spawn_thread(gst_haikuaudio_sink_monitor_thread,
+			"monitor_thread", B_NORMAL_PRIORITY, (void*)haikuaudio);
+		resume_thread(haikuaudio->monitorThread);
+	} else {
+		gst_haikuaudio_sink_soundplayer_create(haikuaudio);
+	}
 
 	return TRUE;
 }
@@ -349,17 +444,10 @@ gst_haikuaudio_sink_unprepare (GstAudioSink * asink)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK (asink);
 
-	if(haikuaudio->m_player != NULL) {
-		haikuaudio->m_player->SetHasData(false);
-		haikuaudio->m_player->Stop();
+	if (haikuaudio->is_webapp)
+		kill_thread(haikuaudio->monitorThread);
 
-		delete_sem(haikuaudio->block_sem);
-		delete_sem(haikuaudio->unblock_sem);
-
-		delete haikuaudio->m_player;
-
-		haikuaudio->m_player = NULL;
-	}
+	gst_haikuaudio_sink_soundplayer_delete(haikuaudio);
 
 	if(haikuaudio->buffer != NULL) {
 		free(haikuaudio->buffer);

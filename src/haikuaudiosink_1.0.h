@@ -41,7 +41,7 @@ typedef struct _GstHaikuAudioSink GstHaikuAudioSink;
 typedef struct _GstHaikuAudioSinkClass GstHaikuAudioSinkClass;
 
 struct _GstHaikuAudioSink {
-	GstAudioSink    sink;
+	GstAudioSink sink;
 
 	guint8 *buffer;
 
@@ -50,12 +50,18 @@ struct _GstHaikuAudioSink {
 	sem_id block_sem;
 	sem_id unblock_sem;
 
-	BSoundPlayer *m_player;	
+	thread_id monitorThread;
+
+	BSoundPlayer *soundPlayer;
 	BString *nodeName;
 	GstCaps caps;
 
+	bigtime_t lastWriteTime;
+
 	double volume;
 	gboolean mute;
+
+	gboolean is_webapp;
 };
 
 struct _GstHaikuAudioSinkClass {
