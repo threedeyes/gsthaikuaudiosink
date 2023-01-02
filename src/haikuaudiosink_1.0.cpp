@@ -185,6 +185,7 @@ gst_haikuaudio_sink_init (GstHaikuAudioSink * haikuaudiosink,
 	haikuaudiosink->nodeName = new BString("GStreamer");
 	if (be_app != NULL)  {
 		app_info appinfo;
+		app_info parentinfo;
 		if (be_app->GetAppInfo(&appinfo) == B_OK) {
 			BPath apppath(&appinfo.ref);
 			if (apppath.InitCheck() == B_OK) {
@@ -194,6 +195,15 @@ gst_haikuaudio_sink_init (GstHaikuAudioSink * haikuaudiosink,
 					strncmp(appinfo.signature, "application/x-vnd.qutebrowser", B_MIME_TYPE_LENGTH) == 0 ||
 					strncmp(appinfo.signature, "application/x-vnd.dooble", B_MIME_TYPE_LENGTH) == 0) {
 						haikuaudiosink->is_webapp = TRUE;
+				}
+			}
+		}
+		if (be_roster->GetRunningAppInfo(getppid(), &parentinfo) == B_OK) {
+			BPath apppath(&parentinfo.ref);
+			if (apppath.InitCheck() == B_OK) {
+				if (strncmp(appinfo.signature, "application/x-vnd.gtk-webkit-webprocess", B_MIME_TYPE_LENGTH) == 0) {
+					haikuaudiosink->nodeName->SetTo(apppath.Leaf());
+					haikuaudiosink->is_webapp = TRUE;
 				}
 			}
 		}
