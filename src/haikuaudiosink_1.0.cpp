@@ -29,11 +29,6 @@
 #define DEFAULT_VOLUME      0.6
 #define MAX_VOLUME          1.0
 
-#define HAIKU_SND_BUFFER_SIZE 1920
-#define HAIKU_SND_RATE		"48000"
-#define HAIKU_SND_CHANNELS	"2"
-#define HAIKU_SND_WIDTH		"32"
-
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
@@ -72,11 +67,6 @@ static void gst_haikuaudio_sink_get_property (GObject * object, guint prop_id, G
 
 enum
 {
-	LAST_SIGNAL
-};
-
-enum
-{
   ARG_0,
   ARG_VOLUME,
   ARG_MUTE
@@ -87,9 +77,9 @@ static GstStaticPadTemplate haikuaudiosink_sink_factory =
 	GST_PAD_SINK,
 	GST_PAD_ALWAYS,
 	GST_STATIC_CAPS ("audio/x-raw, "
-        "format = (string) F32LE, "
-        "channels = (int) " HAIKU_SND_CHANNELS ", "
-        "rate = (int) " HAIKU_SND_RATE ", "
+        "format = (string) { S16LE, S32LE, F32LE, S8, U8 }, "
+        "channels = (int) [1, 2], "
+        "rate = (int) [1, MAX ], "
         "layout = (string) interleaved")
 	);
 
@@ -216,13 +206,15 @@ static GstCaps *
 gst_haikuaudio_sink_getcaps (GstBaseSink * bsink, GstCaps * filter)
 {
   GstHaikuAudioSink *sink = GST_HAIKUAUDIOSINK (bsink);
+  GstCaps *caps = gst_pad_get_pad_template_caps (bsink->sinkpad);;
 
-  GstCaps *caps = NULL;
+  if (filter) {
+    GstCaps *filtered =
+        gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (caps);
+    caps = filtered;
+  }
 
-  caps = gst_caps_new_simple ("audio/x-raw",
-      "format", G_TYPE_STRING, "F32LE",
-      "layout", G_TYPE_STRING, "interleaved",
-      "channels", G_TYPE_INT, atoi(HAIKU_SND_CHANNELS), "rate", G_TYPE_INT, atoi(HAIKU_SND_RATE), NULL);
   return caps;
 }
 
@@ -310,9 +302,7 @@ gst_haikuaudio_sink_soundplayer_callback(void *cookie, void *buffer, size_t leng
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK ((GstAudioSink*)cookie);
 
-	bigtime_t timeout = (1000000 * (length / (format.channel_count * sizeof(float)))) / format.frame_rate;
-
-	if (acquire_sem_etc(haikuaudio->block_sem, 1, B_RELATIVE_TIMEOUT, timeout) == B_TIMED_OUT) {
+	if (acquire_sem_etc(haikuaudio->block_sem, 1, B_RELATIVE_TIMEOUT, haikuaudio->latency_time) == B_TIMED_OUT) {
 		memset(buffer, 0, length);
 		return;
 	}
@@ -368,9 +358,9 @@ gst_haikuaudio_sink_monitor_thread (void *data)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK ((GstAudioSink*)data);
 	while(true) {
-		if (system_time() - haikuaudio->lastWriteTime > 1000000)
+		if (system_time() - haikuaudio->lastWriteTime > G_USEC_PER_SEC)
 			gst_haikuaudio_sink_soundplayer_delete(haikuaudio);
-		snooze(10000);
+		snooze(G_USEC_PER_SEC / 100);
 	}
 }
 
@@ -402,10 +392,7 @@ gst_haikuaudio_sink_write (GstAudioSink * asink, gpointer data, guint length)
 		length = haikuaudio->mediaKitFormat.buffer_size;
 	}
 
-	bigtime_t timeout = (1000000 * (length / (haikuaudio->mediaKitFormat.channel_count *
-		sizeof(float)))) / haikuaudio->mediaKitFormat.frame_rate;
-
-	if (acquire_sem_etc(haikuaudio->unblock_sem, 1, B_RELATIVE_TIMEOUT, timeout) == B_TIMED_OUT)
+	if (acquire_sem_etc(haikuaudio->unblock_sem, 1, B_RELATIVE_TIMEOUT, haikuaudio->latency_time) == B_TIMED_OUT)
 		return 0;
 
 	memcpy(haikuaudio->buffer, data, length);
@@ -415,22 +402,44 @@ gst_haikuaudio_sink_write (GstAudioSink * asink, gpointer data, guint length)
 	return length;
 }
 
+static uint32
+mediakit_format_from_gst (GstAudioFormat format)
+{
+	switch (format) {
+		case GST_AUDIO_FORMAT_S8:
+			return media_raw_audio_format::B_AUDIO_CHAR;
+
+		case GST_AUDIO_FORMAT_U8:
+			return media_raw_audio_format::B_AUDIO_UCHAR;
+
+		case GST_AUDIO_FORMAT_S16LE:
+			return media_raw_audio_format::B_AUDIO_SHORT;
+
+		case GST_AUDIO_FORMAT_S32LE:
+			return media_raw_audio_format::B_AUDIO_INT;
+
+		case GST_AUDIO_FORMAT_F32LE:
+			return media_raw_audio_format::B_AUDIO_FLOAT;
+
+		default:
+			g_assert_not_reached ();
+	}
+}
+
 static gboolean
 gst_haikuaudio_sink_prepare (GstAudioSink * asink, GstAudioRingBufferSpec * spec)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK (asink);
 
-	if (GST_AUDIO_INFO_WIDTH (&spec->info) != atoi(HAIKU_SND_WIDTH))
-		return FALSE;
-	if (GST_AUDIO_INFO_CHANNELS (&spec->info) != atoi(HAIKU_SND_CHANNELS))
-		return FALSE;
-
-	spec->segsize = HAIKU_SND_BUFFER_SIZE;
+	haikuaudio->latency_time = spec->latency_time;
+	haikuaudio->bytesPerFrame = GST_AUDIO_INFO_BPF (&spec->info);
+	spec->segsize = (spec->latency_time * GST_AUDIO_INFO_RATE (&spec->info) / G_USEC_PER_SEC) *
+		GST_AUDIO_INFO_BPF (&spec->info);
 
 	haikuaudio->mediaKitFormat = {
-		(float)atof(HAIKU_SND_RATE),
-		(uint32)atoi(HAIKU_SND_CHANNELS),
-		media_raw_audio_format::B_AUDIO_FLOAT,
+		(float)GST_AUDIO_INFO_RATE (&spec->info),
+		(uint32)GST_AUDIO_INFO_CHANNELS (&spec->info),
+		mediakit_format_from_gst(GST_AUDIO_INFO_FORMAT (&spec->info)),
 		B_MEDIA_LITTLE_ENDIAN,
 		(uint32)spec->segsize
   	};

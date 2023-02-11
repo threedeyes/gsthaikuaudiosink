@@ -46,6 +46,8 @@ struct _GstHaikuAudioSink {
 	guint8 *buffer;
 
 	media_raw_audio_format mediaKitFormat;
+	guint32 bytesPerFrame;
+	bigtime_t latency_time;
 
 	sem_id block_sem;
 	sem_id unblock_sem;
