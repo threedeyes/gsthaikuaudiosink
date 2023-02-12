@@ -1,6 +1,6 @@
 project(GSTHAIKUAUDIOSINK)
 
-cmake_minimum_required (VERSION 2.4)
+cmake_minimum_required (VERSION 2.24)
 
 find_package (PkgConfig REQUIRED)
 pkg_check_modules (GLIB2 REQUIRED glib-2.0>=2.36.0)
@@ -17,8 +17,11 @@ set(GSTHAIKUAUDIO_LIB_NAME gsthaikuaudiosink)
 
 pkg_check_modules(GST1_TEST gstreamer-1.0)
 if ( GST1_TEST_FOUND )
+    pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0)
+    pkg_check_modules(GSTREAMER-APP REQUIRED gstreamer-app-1.0)
 	set(GSTHAIKUAUDIO_LIBRARIES glib-2.0 gobject-2.0 gstbase-1.0 gstreamer-1.0 gstaudio-1.0 gstcontroller-1.0 intl be root media)
 	add_library(${GSTHAIKUAUDIO_LIB_NAME} SHARED src/haikuaudiosink_1.0.cpp)
+	include_directories(${GSTREAMER_INCLUDE_DIRS} ${GSTREAMER-APP_INCLUDE_DIRS})
 endif()
 
 pkg_check_modules(GST01_TEST gstreamer-0.10)
