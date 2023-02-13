@@ -56,6 +56,7 @@ static void gst_haikuaudio_sink_base_init (gpointer g_class);
 static void gst_haikuaudio_sink_class_init (GstHaikuAudioSinkClass * klass);
 static void gst_haikuaudio_sink_init (GstHaikuAudioSink * haikuaudiosink, GstHaikuAudioSinkClass * g_class);
 static gint gst_haikuaudio_sink_write (GstAudioSink * asink, gpointer data, guint length);
+static void gst_haikuaudio_sink_finalize (GObject * object);
 
 static void gst_haikuaudio_sink_set_volume (GstHaikuAudioSink * sink, gdouble volume, gboolean store);
 static gdouble gst_haikuaudio_sink_get_volume (GstHaikuAudioSink * sink);
@@ -64,6 +65,8 @@ static gboolean gst_haikuaudio_sink_get_mute (GstHaikuAudioSink * sink);
 
 static void gst_haikuaudio_sink_set_property (GObject * object, guint prop_id, const GValue * value, GParamSpec * pspec);
 static void gst_haikuaudio_sink_get_property (GObject * object, guint prop_id, GValue * value, GParamSpec * pspec);
+
+static void gst_haikuaudio_sink_soundplayer_delete (GstHaikuAudioSink * sink);
 
 enum
 {
@@ -150,6 +153,7 @@ gst_haikuaudio_sink_class_init (GstHaikuAudioSinkClass * klass)
 	gstaudiosink_class->unprepare = GST_DEBUG_FUNCPTR (gst_haikuaudio_sink_unprepare);
 	gstaudiosink_class->write = GST_DEBUG_FUNCPTR (gst_haikuaudio_sink_write);
 
+	gobject_class->finalize = gst_haikuaudio_sink_finalize;
 	gobject_class->set_property = gst_haikuaudio_sink_set_property;
 	gobject_class->get_property = gst_haikuaudio_sink_get_property;
 
@@ -200,6 +204,14 @@ gst_haikuaudio_sink_init (GstHaikuAudioSink * haikuaudiosink,
 	}
 	haikuaudiosink->volume = DEFAULT_VOLUME;
 	haikuaudiosink->mute = DEFAULT_MUTE;
+}
+
+static void
+gst_haikuaudio_sink_finalize (GObject * object)
+{
+	GstHaikuAudioSink *sink = GST_HAIKUAUDIOSINK (object);
+	gst_haikuaudio_sink_soundplayer_delete(sink);
+	G_OBJECT_CLASS (parent_class)->finalize (object);
 }
 
 static GstCaps *
@@ -358,7 +370,7 @@ gst_haikuaudio_sink_monitor_thread (void *data)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK ((GstAudioSink*)data);
 	while(true) {
-		if (system_time() - haikuaudio->lastWriteTime > G_USEC_PER_SEC)
+		if (system_time() - haikuaudio->lastWriteTime > G_USEC_PER_SEC && haikuaudio->soundPlayer != NULL)
 			gst_haikuaudio_sink_soundplayer_delete(haikuaudio);
 		snooze(G_USEC_PER_SEC / 100);
 	}
@@ -385,7 +397,7 @@ gst_haikuaudio_sink_write (GstAudioSink * asink, gpointer data, guint length)
 {
 	GstHaikuAudioSink *haikuaudio = GST_HAIKUAUDIOSINK (asink);
 
-	if (haikuaudio->is_webapp)
+	if (haikuaudio->is_webapp && haikuaudio->soundPlayer == NULL)
 		gst_haikuaudio_sink_soundplayer_create(haikuaudio);
 
 	if (length > haikuaudio->mediaKitFormat.buffer_size) {
